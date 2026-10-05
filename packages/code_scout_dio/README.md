@@ -31,12 +31,45 @@ covered in the [core package's readme](https://pub.dev/packages/code_scout).
 
 ## What you get
 
-Every call writes one log when the request goes out and a second when it comes back. The two
-share a request id, so the in-app panel and the dashboard show them as one row rather than two
-unrelated entries, with the status, the duration, and the headers and bodies on both sides.
+Every call writes one log when the request goes out, and normally a second when it comes back or
+fails. The two share a request id, so the in-app panel and the dashboard show them as one row
+rather than two unrelated entries, with the status, the duration, and the headers and bodies on
+both sides.
+
+A call can keep only its request log and show as pending. That happens when the app was killed
+before the answer came, when the answer took more than two minutes, or when another interceptor
+rejected the call after this one saw the request and before it saw the response. A call that
+another interceptor rejects before this one sees the request is not recorded at all.
 
 You can read all of this on the device with no server configured at all. Tap the floating button
 and open the Network tab.
+
+## Tying a log to its call
+
+When a response body stops matching your model, `fromJson` throws, and that error on its own does
+not say which call sent the body. Pass the call's id with it:
+
+```dart
+final response = await dio.get<Map<String, dynamic>>('/v2/cart');
+try {
+  return Cart.fromJson(response.data!);
+} catch (e, st) {
+  CodeScout.instance.e('Could not read GET /v2/cart',
+      error: e, stackTrace: st, requestId: response.codeScoutRequestId);
+  rethrow;
+}
+```
+
+The log is then shown with the call: in the in-app panel, and on the dashboard, where
+`request:<id>` finds both. It stays an ordinary log, so a call that answered 200 is still a 200.
+A `DioException` has the same getter, so you can name a failed call from a `catch` too, including
+a body that does not fit the type you asked for. The `requestId` argument needs `code_scout` 1.6.0
+or later.
+
+Network logs are written at debug level, apart from a failure, which is logged as an error. At the
+default `minimumLevel` of info a call that succeeded is not recorded, so your log would carry the
+id of a call nobody kept. Set `minimumLevel` to `LogLevel.debug` to keep the request and response
+beside it.
 
 ## Two things worth knowing
 

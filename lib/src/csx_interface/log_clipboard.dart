@@ -46,7 +46,12 @@ String formatLogForClipboard(LogEntry entry, {SessionRecord? session, String? se
       ..writeln('tags: ${tags.join(', ')}');
   }
 
-  final trailer = _trailer(session: session, sessionId: sessionId);
+  // In full, never shortened like the session id below: it is what the
+  // dashboard's request: search takes, and a shortened id finds nothing.
+  final trailer = [
+    if (entry.requestId != null) 'request ${entry.requestId}',
+    _trailer(session: session, sessionId: sessionId),
+  ].where((line) => line.isNotEmpty).join('\n');
   if (trailer.isNotEmpty) {
     out
       ..writeln()

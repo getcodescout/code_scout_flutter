@@ -247,6 +247,13 @@ class CodeScout {
   /// It still returns normally when a log is dropped by the level gate, the tag
   /// filter or sampling. Those are not failures, they are the configuration
   /// doing its job.
+  ///
+  /// [requestId] is the id of the HTTP call this log is about. Read it from
+  /// `codeScoutRequestId`, which `code_scout_dio` and `code_scout_http` put on
+  /// the response, and the log is linked to that call: `request:<id>` on the
+  /// dashboard finds both, and the in-app panel shows them together. The log
+  /// stays an ordinary log and never changes the call's status. An id that is
+  /// not a UUID is dropped, since the server could not store it.
   Future<void> logMessage({
     required LogLevel level,
     required String message,
@@ -254,6 +261,7 @@ class CodeScout {
     StackTrace? stackTrace,
     Set<String>? tags,
     Map<String, dynamic>? metadata,
+    String? requestId,
   }) async {
     LogEntry logEntry = LogEntry(
       level: level,
@@ -262,6 +270,7 @@ class CodeScout {
       stackTrace: stackTrace,
       tags: tags,
       metadata: metadata,
+      requestId: requestId,
       sessionID: CodeScout.instance.currentSessionId,
     );
 
@@ -271,6 +280,8 @@ class CodeScout {
   /// Fire-and-forget convenience method. Errors are caught internally
   /// so they never crash the host app. Use [logMessage] if you need
   /// to await persistence.
+  ///
+  /// [requestId] links the log to one HTTP call, as in [logMessage].
   void log({
     required LogLevel level,
     required String message,
@@ -278,6 +289,7 @@ class CodeScout {
     StackTrace? stackTrace,
     Set<String>? tags,
     Map<String, dynamic>? metadata,
+    String? requestId,
   }) {
     logMessage(
       level: level,
@@ -286,6 +298,7 @@ class CodeScout {
       stackTrace: stackTrace,
       tags: tags,
       metadata: metadata,
+      requestId: requestId,
     ).catchError((Object e, StackTrace st) {
       // Use dart:developer log to avoid recursion
       dev.log('CodeScout: log failed: $e', stackTrace: st);
@@ -297,28 +310,133 @@ class CodeScout {
   // ---------------------------------------------------------------------------
 
   /// Log a verbose message.
-  void v(String message, {dynamic error, StackTrace? stackTrace, Set<String>? tags, Map<String, dynamic>? metadata}) =>
-      log(level: LogLevel.verbose, message: message, error: error, stackTrace: stackTrace, tags: tags, metadata: metadata);
+  ///
+  /// [requestId] is the id of the HTTP call this log is about, from the
+  /// `codeScoutRequestId` getter a companion package puts on the response.
+  void v(String message,
+          {dynamic error,
+          StackTrace? stackTrace,
+          Set<String>? tags,
+          Map<String, dynamic>? metadata,
+          String? requestId}) =>
+      log(
+          level: LogLevel.verbose,
+          message: message,
+          error: error,
+          stackTrace: stackTrace,
+          tags: tags,
+          metadata: metadata,
+          requestId: requestId);
 
   /// Log a debug message.
-  void d(String message, {dynamic error, StackTrace? stackTrace, Set<String>? tags, Map<String, dynamic>? metadata}) =>
-      log(level: LogLevel.debug, message: message, error: error, stackTrace: stackTrace, tags: tags, metadata: metadata);
+  ///
+  /// [requestId] is the id of the HTTP call this log is about, from the
+  /// `codeScoutRequestId` getter a companion package puts on the response.
+  void d(String message,
+          {dynamic error,
+          StackTrace? stackTrace,
+          Set<String>? tags,
+          Map<String, dynamic>? metadata,
+          String? requestId}) =>
+      log(
+          level: LogLevel.debug,
+          message: message,
+          error: error,
+          stackTrace: stackTrace,
+          tags: tags,
+          metadata: metadata,
+          requestId: requestId);
 
   /// Log an info message.
-  void i(String message, {dynamic error, StackTrace? stackTrace, Set<String>? tags, Map<String, dynamic>? metadata}) =>
-      log(level: LogLevel.info, message: message, error: error, stackTrace: stackTrace, tags: tags, metadata: metadata);
+  ///
+  /// [requestId] is the id of the HTTP call this log is about, from the
+  /// `codeScoutRequestId` getter a companion package puts on the response.
+  void i(String message,
+          {dynamic error,
+          StackTrace? stackTrace,
+          Set<String>? tags,
+          Map<String, dynamic>? metadata,
+          String? requestId}) =>
+      log(
+          level: LogLevel.info,
+          message: message,
+          error: error,
+          stackTrace: stackTrace,
+          tags: tags,
+          metadata: metadata,
+          requestId: requestId);
 
   /// Log a warning message.
-  void w(String message, {dynamic error, StackTrace? stackTrace, Set<String>? tags, Map<String, dynamic>? metadata}) =>
-      log(level: LogLevel.warning, message: message, error: error, stackTrace: stackTrace, tags: tags, metadata: metadata);
+  ///
+  /// [requestId] is the id of the HTTP call this log is about, from the
+  /// `codeScoutRequestId` getter a companion package puts on the response.
+  void w(String message,
+          {dynamic error,
+          StackTrace? stackTrace,
+          Set<String>? tags,
+          Map<String, dynamic>? metadata,
+          String? requestId}) =>
+      log(
+          level: LogLevel.warning,
+          message: message,
+          error: error,
+          stackTrace: stackTrace,
+          tags: tags,
+          metadata: metadata,
+          requestId: requestId);
 
   /// Log an error message.
-  void e(String message, {dynamic error, StackTrace? stackTrace, Set<String>? tags, Map<String, dynamic>? metadata}) =>
-      log(level: LogLevel.error, message: message, error: error, stackTrace: stackTrace, tags: tags, metadata: metadata);
+  ///
+  /// [requestId] is the id of the HTTP call this log is about, from the
+  /// `codeScoutRequestId` getter a companion package puts on the response.
+  ///
+  /// The usual place for [requestId]: a response body that no longer matches
+  /// the app's model makes `fromJson` throw, and passing the call's id ties
+  /// that failure to the body that caused it.
+  ///
+  /// ```dart
+  /// final response = await dio.get<Map<String, dynamic>>('/v2/cart');
+  /// try {
+  ///   return Cart.fromJson(response.data!);
+  /// } catch (e, st) {
+  ///   CodeScout.instance.e('Could not read GET /v2/cart',
+  ///       error: e, stackTrace: st, requestId: response.codeScoutRequestId);
+  ///   rethrow;
+  /// }
+  /// ```
+  void e(String message,
+          {dynamic error,
+          StackTrace? stackTrace,
+          Set<String>? tags,
+          Map<String, dynamic>? metadata,
+          String? requestId}) =>
+      log(
+          level: LogLevel.error,
+          message: message,
+          error: error,
+          stackTrace: stackTrace,
+          tags: tags,
+          metadata: metadata,
+          requestId: requestId);
 
   /// Log a fatal message.
-  void f(String message, {dynamic error, StackTrace? stackTrace, Set<String>? tags, Map<String, dynamic>? metadata}) =>
-      log(level: LogLevel.fatal, message: message, error: error, stackTrace: stackTrace, tags: tags, metadata: metadata);
+  ///
+  /// [requestId] is the id of the HTTP call this log is about, from the
+  /// `codeScoutRequestId` getter a companion package puts on the response.
+  void f(String message,
+          {dynamic error,
+          StackTrace? stackTrace,
+          Set<String>? tags,
+          Map<String, dynamic>? metadata,
+          String? requestId}) =>
+      log(
+          level: LogLevel.fatal,
+          message: message,
+          error: error,
+          stackTrace: stackTrace,
+          tags: tags,
+          metadata: metadata,
+          requestId: requestId);
 
   /// Uploads whatever is waiting, now, and completes when it has landed or
   /// failed. Normally the worker does this on its own schedule.

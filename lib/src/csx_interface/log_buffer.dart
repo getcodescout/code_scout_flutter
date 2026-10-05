@@ -61,7 +61,8 @@ class LogBuffer extends ChangeNotifier {
   }
 
   /// The errors and fatals in the buffer, newest first, collapsed by exact
-  /// message so the same failure firing eight times is one row that counts.
+  /// message and error text so the same failure firing eight times is one row
+  /// that counts.
   ///
   /// Deliberately not the server's fingerprint. `internal/domain/fingerprint.go`
   /// blanks the varying parts of a message, and porting it here would put one
@@ -115,13 +116,24 @@ class LogBuffer extends ChangeNotifier {
 
   /// The network calls in the buffer, phases paired by request id, newest
   /// first. The same collapsing the dashboard does, on the same data.
+  ///
+  /// A log the app wrote about a call carries the call's request id and is
+  /// not a network log. It is attached to [OverlayCall.logs] and never to the
+  /// phases, where its metadata could be read as the request and its level as
+  /// a failure. Only a network phase makes a row: a linked log whose call has
+  /// left the buffer, or was never captured, makes none.
   List<OverlayCall> calls() {
     final byRequest = <String, List<LogEntry>>{};
+    final linked = <String, List<LogEntry>>{};
     final order = <String>[];
 
     for (final entry in _entries) {
-      if (!entry.isNetworkCall || entry.requestId == null) continue;
-      final id = entry.requestId!;
+      final id = entry.requestId;
+      if (id == null) continue;
+      if (!entry.isNetworkCall) {
+        (linked[id] ??= []).add(entry);
+        continue;
+      }
       if (!byRequest.containsKey(id)) {
         byRequest[id] = [];
         order.add(id);
@@ -129,7 +141,18 @@ class LogBuffer extends ChangeNotifier {
       byRequest[id]!.add(entry);
     }
 
-    return order.map((id) => OverlayCall(id, byRequest[id]!)).toList();
+    return order
+        .map((id) => OverlayCall(id, byRequest[id]!, logs: linked[id] ?? const []))
+        .toList();
+  }
+
+  /// The call with this request id, or null when none of its phases are in
+  /// the buffer.
+  OverlayCall? callById(String requestId) {
+    for (final call in calls()) {
+      if (call.requestId == requestId) return call;
+    }
+    return null;
   }
 }
 
@@ -168,12 +191,17 @@ class ErrorGroup {
 
 /// One network call: its phases, and the answers the list needs from them.
 class OverlayCall {
-  OverlayCall(this.requestId, this.phases);
+  OverlayCall(this.requestId, this.phases, {this.logs = const []});
 
   final String requestId;
 
   /// Newest first, because that is the order they came out of the buffer.
   final List<LogEntry> phases;
+
+  /// What the app itself logged about this call, such as a body its model
+  /// could not read. Newest first. Nothing below reads these: a call that
+  /// answered 200 stays a 200 however badly the app took the body.
+  final List<LogEntry> logs;
 
   LogEntry? phase(NetworkCallPhase want) {
     for (final entry in phases) {

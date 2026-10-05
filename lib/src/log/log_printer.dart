@@ -24,6 +24,12 @@ class CSxPrinter {
     }
     // Handle regular logs
     else {
+      // An app log carries one when it is about a call, such as a body that
+      // failed to parse. It is the key that finds that call's phases.
+      if (logEntry.requestId != null) {
+        buffer.writeln('🆔 Request ID: ${logEntry.requestId}');
+      }
+
       if (logEntry.metadata != null) {
         buffer.writeln('📋 Metadata: ${_formatMetadata(logEntry.metadata!)}');
       }

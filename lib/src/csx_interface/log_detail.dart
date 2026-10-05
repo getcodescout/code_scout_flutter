@@ -1,8 +1,13 @@
 import 'package:code_scout/code_scout.dart';
+import 'package:code_scout/src/const/global_vars.dart';
+import 'package:code_scout/src/csx_interface/log_buffer.dart';
 import 'package:code_scout/src/csx_interface/log_clipboard.dart';
 import 'package:code_scout/src/csx_interface/menu.dart';
+import 'package:code_scout/src/csx_interface/network_detail.dart';
+import 'package:code_scout/src/csx_interface/network_tab.dart';
 import 'package:code_scout/src/csx_interface/overlay_theme.dart';
 import 'package:code_scout/src/csx_interface/overlay_widgets.dart';
+import 'package:code_scout/src/log/log_sync_worker.dart';
 import 'package:code_scout/src/utils/stack_trace_parser.dart';
 import 'package:flutter/material.dart';
 
@@ -91,6 +96,10 @@ class LogDetail extends StatelessWidget {
                 ),
                 CSxCode(text: entry.error.toString()),
               ],
+              // A network phase is its own call. This is for a log the app
+              // wrote about one.
+              if (!entry.isNetworkCall && entry.requestId != null)
+                ..._callSection(context, entry.requestId!),
               if (frames.isNotEmpty) ...[
                 CSxSectionHeader(
                   title: 'Stack trace',
@@ -145,6 +154,44 @@ class LogDetail extends StatelessWidget {
     );
   }
 
+  /// The call this log is about, one tap from the body it describes.
+  ///
+  /// Found by id among the calls in the buffer. When it is not there, the id
+  /// is shown in full with a Copy: at the default minimumLevel of info a 200's
+  /// phases are debug logs and never reach the buffer, and past that the
+  /// buffer drops its oldest first while the app's log is written after its
+  /// call, so the log can outlive it.
+  List<Widget> _callSection(BuildContext context, String requestId) {
+    final call = LogBuffer.i.callById(requestId);
+    if (call != null) {
+      return [
+        const CSxSectionHeader(title: 'Call'),
+        _CallLink(call: call),
+      ];
+    }
+    // A launch that sampling left out uploads nothing, so the dashboard has
+    // neither this log nor its call.
+    final uploaded = LogSyncWorker.i.canUpload && CodeScout.instance.isSessionSampledIn;
+    return [
+      CSxSectionHeader(
+        title: 'Call',
+        trailing: CSxSmallButton(
+          label: 'Copy',
+          onTap: () => copyAndTell(context, requestId, 'Request id'),
+        ),
+      ),
+      CSxKeyValue(rows: [('request', requestId, null)]),
+      CSxHint(
+        child: Text(
+          'This call is not in the panel. The panel keeps the newest '
+          '${LogBuffer.maxEntries} logs of this launch, and network logs are '
+          'written at debug, which an app at minimumLevel info never keeps.'
+          '${uploaded ? ' Search request: and this id on the dashboard to see what was uploaded.' : ''}',
+        ),
+      ),
+    ];
+  }
+
   static String _title(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 
   static String _scalar(Object? v) => v == null
@@ -167,6 +214,56 @@ class LogDetail extends StatelessWidget {
     String two(int n) => n.toString().padLeft(2, '0');
     final ms = local.millisecond.toString().padLeft(3, '0');
     return '${two(local.hour)}:${two(local.minute)}:${two(local.second)}.$ms';
+  }
+}
+
+/// One row that opens the call: method, path and status. The whole row is
+/// the target, so it takes the full touch height.
+class _CallLink extends StatelessWidget {
+  const _CallLink({required this.call});
+
+  final OverlayCall call;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Material(
+        color: CSxColors.card,
+        shape: RoundedRectangleBorder(
+          side: const BorderSide(color: CSxColors.border),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => OverlayNavigator.of(context).push(
+            NetworkDetail(call: call, initialPane: NetworkPane.response),
+          ),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: GlobalVars.minTouchTarget),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Row(
+              children: [
+                CallMethod(call.method),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    call.path,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: mono.copyWith(color: CSxColors.white, fontSize: 12),
+                  ),
+                ),
+                const SizedBox(width: 7),
+                CSxBadge(text: call.status, colour: callColour(call)),
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right, size: 18, color: CSxColors.muted),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

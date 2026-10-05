@@ -1,6 +1,8 @@
 import 'package:code_scout/code_scout.dart';
 import 'package:code_scout/src/csx_interface/log_buffer.dart';
+import 'package:code_scout/src/csx_interface/logs_tab.dart';
 import 'package:code_scout/src/csx_interface/menu.dart';
+import 'package:code_scout/src/csx_interface/network_tab.dart';
 import 'package:code_scout/src/csx_interface/overlay_theme.dart';
 import 'package:code_scout/src/csx_interface/overlay_widgets.dart';
 import 'package:flutter/material.dart';
@@ -10,28 +12,38 @@ import 'package:flutter/material.dart';
 /// What shipped before was three boxes of `metadata.toString()`. Headers are
 /// rows here and bodies are JSON, and both copy on their own.
 class NetworkDetail extends StatefulWidget {
-  const NetworkDetail({super.key, required this.call});
+  const NetworkDetail({super.key, required this.call, this.initialPane = NetworkPane.request});
 
   final OverlayCall call;
+
+  /// Response when arriving from a log about this call, since the body that
+  /// log is about is there.
+  final NetworkPane initialPane;
 
   @override
   State<NetworkDetail> createState() => _NetworkDetailState();
 }
 
-enum _Pane { request, response, timing }
+enum NetworkPane { request, response, timing }
 
 class _NetworkDetailState extends State<NetworkDetail> {
-  _Pane _pane = _Pane.request;
+  /// The pane each open screen was left on. Opening a linked log replaces
+  /// this screen on the sheet's stack, so coming back builds a new state, and
+  /// without this it would reset to Request, away from the section the log
+  /// was opened from. Keyed weakly on the widget, which the stack holds.
+  static final Expando<NetworkPane> _leftOn = Expando();
+
+  late NetworkPane _pane = _leftOn[widget] ?? widget.initialPane;
+
+  void _show(NetworkPane pane) {
+    _leftOn[widget] = pane;
+    setState(() => _pane = pane);
+  }
 
   @override
   Widget build(BuildContext context) {
     final call = widget.call;
-    final pending = call.duration == null && !call.failed;
-    final colour = call.failed
-        ? CSxColors.error
-        : pending
-            ? CSxColors.warning
-            : CSxColors.debug;
+    final colour = callColour(call);
 
     return Column(
       children: [
@@ -72,9 +84,9 @@ class _NetworkDetailState extends State<NetworkDetail> {
           padding: const EdgeInsets.symmetric(horizontal: 6),
           child: Row(
             children: [
-              for (final pane in _Pane.values)
+              for (final pane in NetworkPane.values)
                 InkWell(
-                  onTap: () => setState(() => _pane = pane),
+                  onTap: () => _show(pane),
                   child: Container(
                     height: 44,
                     padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -89,9 +101,9 @@ class _NetworkDetailState extends State<NetworkDetail> {
                     alignment: Alignment.center,
                     child: Text(
                       switch (pane) {
-                        _Pane.request => 'Request',
-                        _Pane.response => 'Response',
-                        _Pane.timing => 'Timing',
+                        NetworkPane.request => 'Request',
+                        NetworkPane.response => 'Response',
+                        NetworkPane.timing => 'Timing',
                       },
                       style: TextStyle(
                         color: _pane == pane ? CSxColors.white : CSxColors.muted,
@@ -108,14 +120,50 @@ class _NetworkDetailState extends State<NetworkDetail> {
           child: ListView(
             padding: const EdgeInsets.only(bottom: 20),
             children: switch (_pane) {
-              _Pane.request => _phase(context, call, NetworkCallPhase.request),
-              _Pane.response => _responsePane(context, call),
-              _Pane.timing => _timing(context, call),
+              NetworkPane.request => _phase(context, call, NetworkCallPhase.request),
+              NetworkPane.response => [
+                  ..._linked(call),
+                  ..._responsePane(context, call),
+                ],
+              NetworkPane.timing => _timing(context, call),
             },
           ),
         ),
       ],
     );
+  }
+
+  /// The app's own logs about this call, above the body they are about, so a
+  /// parse failure reads directly over the JSON that caused it. Each opens
+  /// the log.
+  List<Widget> _linked(OverlayCall call) {
+    if (call.logs.isEmpty) return const [];
+    return [
+      const CSxSectionHeader(title: 'Logged by the app'),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        // Material, not a decorated box: the rows are InkWells and paint on
+        // the nearest Material.
+        child: Material(
+          color: CSxColors.card,
+          shape: RoundedRectangleBorder(
+            side: const BorderSide(color: CSxColors.border),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              for (var i = 0; i < call.logs.length; i++)
+                LogRow(
+                  entry: call.logs[i],
+                  showError: true,
+                  divider: i != call.logs.length - 1,
+                ),
+            ],
+          ),
+        ),
+      ),
+    ];
   }
 
   List<Widget> _responsePane(BuildContext context, OverlayCall call) {
@@ -139,11 +187,21 @@ class _NetworkDetailState extends State<NetworkDetail> {
     final meta = call.phase(phase)?.metadata;
     if (meta == null || meta.isEmpty) {
       return [
-        CSxEmpty(
-          title: 'Nothing recorded',
-          detail: 'This call has no ${phase.name} phase in the buffer. '
-              'A phase can fall off the back once the buffer fills.',
-        ),
+        // The buffer drops its oldest first, so a response cannot fall off
+        // before its request. With the request here, it never reached the
+        // buffer.
+        if (phase == NetworkCallPhase.response && call.hasRequest && !call.hasResponse)
+          const CSxEmpty(
+            title: 'No response recorded',
+            detail: 'The call may still be running. The SDK holds a request for two '
+                'minutes, and a response that arrives after that can be dropped.',
+          )
+        else
+          CSxEmpty(
+            title: 'Nothing recorded',
+            detail: 'This call has no ${phase.name} phase in the buffer. '
+                'A phase can fall off the back once the buffer fills.',
+          ),
       ];
     }
 
@@ -248,13 +306,34 @@ class _NetworkDetailState extends State<NetworkDetail> {
     if (call.duration != null) out.writeln('duration ${call.duration!.inMilliseconds} ms');
     for (final phase in NetworkCallPhase.values) {
       final entry = call.phase(phase);
-      if (entry == null) continue;
-      out
-        ..writeln()
-        ..writeln('[${phase.name}]')
-        ..writeln(prettyJson(entry.metadata));
+      if (entry != null) {
+        out
+          ..writeln()
+          ..writeln('[${phase.name}]')
+          ..writeln(prettyJson(entry.metadata));
+      }
+      // Where the Response pane lists them: above the response or error.
+      if (phase == NetworkCallPhase.request) _linkedAsText(out, call.logs);
     }
     return out.toString().trimRight();
+  }
+
+  /// Each log as its row shows it: level, time, message and error.
+  static void _linkedAsText(StringBuffer out, List<LogEntry> logs) {
+    if (logs.isEmpty) return;
+    out
+      ..writeln()
+      ..writeln('[logged by the app]');
+    for (var i = 0; i < logs.length; i++) {
+      final entry = logs[i];
+      final at = entry.timestamp;
+      final error = entry.error?.toString().trimRight();
+      if (i > 0) out.writeln();
+      out
+        ..writeln(at == null ? entry.level.name : '${entry.level.name} ${_stamp(at)}')
+        ..writeln(entry.message);
+      if (error != null && error.isNotEmpty) out.writeln(error);
+    }
   }
 
   static String _stamp(DateTime at) {

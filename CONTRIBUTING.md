@@ -135,12 +135,15 @@ open SQLite through `dart:ffi`.
 
 This is the only test anywhere that proves the SDK and the dashboard still agree. Everything else
 checks each side against its own copy of the contract, and two copies drift without anything going
-red. The two files are `test/e2e/sdk_to_dashboard_test.dart`, which logs through the public API and
-reads the rows back out of the dashboard's export endpoint, and `test/e2e/db_browser_test.dart`,
-which pairs a real live session over a real socket and drives the dashboard's own `/live/{sid}/db*`
-routes against a real SQLite file. Worth running locally if you touch the wire format, the
-compressor, the sync worker, the live socket or the database browser, and it runs in CI on every
-pull request anyway, so a break there fails your PR whether or not you got to it first.
+red. There are three files. `test/e2e/sdk_to_dashboard_test.dart` logs through the public API and
+reads the rows back out of the dashboard's export endpoint. `test/e2e/db_browser_test.dart` pairs a
+real live session over a real socket and drives the dashboard's own `/live/{sid}/db*` routes
+against a real SQLite file. `test/e2e/linked_log_test.dart` makes a real call through the dio
+interceptor and checks that a log the app wrote about it, with the id from `codeScoutRequestId`,
+is linked to that call on the dashboard. Worth running locally if you touch the wire format, the
+compressor, the sync worker, the live socket, the database browser or the request id, and it runs
+in CI on every pull request anyway, so a break there fails your PR whether or not you got to it
+first.
 
 ## What a good pull request looks like
 

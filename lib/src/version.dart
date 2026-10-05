@@ -8,4 +8,4 @@
 /// It is sent with every session so the dashboard can show which SDK an app is
 /// running. That is the whole point: "is this app old enough to be missing the
 /// fix?" is currently a question nobody can answer without asking the developer.
-const String codeScoutSdkVersion = '1.5.3';
+const String codeScoutSdkVersion = '1.6.0';

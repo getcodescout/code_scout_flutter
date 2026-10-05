@@ -37,9 +37,14 @@ CodeScout itself still needs `init()` called somewhere, which is covered in the
 
 ## What you get
 
-Every call writes one log when the request goes out and a second when it comes back. The two
-share a request id, so the in-app panel and the dashboard show them as one row rather than two
-unrelated entries, with the status, the duration, and the headers and bodies on both sides.
+Every call writes one log when the request goes out, and normally a second when it comes back or
+fails. The two share a request id, so the in-app panel and the dashboard show them as one row
+rather than two unrelated entries, with the status, the duration, and the headers and bodies on
+both sides.
+
+A call can keep only its request log and show as pending. That happens when the app was killed
+before the answer came, when the answer took more than two minutes, or when the response body broke
+off part way through. In that last case your code gets the exception, but no error is recorded.
 
 Unlike Dio, `package:http` does not treat a 4xx or 5xx as an error, so those arrive as ordinary
 responses and keep their status code. Only a genuine transport failure, such as a refused
@@ -47,6 +52,44 @@ connection or a DNS problem, is recorded as an error.
 
 You can read all of this on the device with no server configured at all. Tap the floating button
 and open the Network tab.
+
+## Tying a log to its call
+
+When a response body stops matching your model, `fromJson` throws, and that error on its own does
+not say which call sent the body. Pass the call's id with it:
+
+```dart
+final response = await client.get(Uri.parse('https://api.example.com/v2/cart'));
+try {
+  return Cart.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+} catch (e, st) {
+  CodeScout.instance.e(
+    'Could not read GET /v2/cart',
+    error: e is FormatException ? 'FormatException: ${e.message}' : e,
+    stackTrace: st,
+    requestId: response.codeScoutRequestId,
+  );
+  rethrow;
+}
+```
+
+The log is then shown with the call: in the in-app panel, and on the dashboard, where
+`request:<id>` finds both. It stays an ordinary log, so a call that answered 200 is still a 200.
+A request you build and pass to `send` has the same getter, so you can name a call that failed
+before any response came back. `client.get` and the other shorthands build their request inside
+the client, so a failure from one of them cannot be named, though it is still recorded as the
+call's error. When a `RetryClient` wraps this client, the getter on the request you built returns
+null, because `RetryClient` sends a copy, but the response it returns still names the call. The
+`requestId` argument needs `code_scout` 1.6.0 or later.
+
+The error you log is stored as its text, and redaction never looks inside it. A `FormatException`
+from `jsonDecode` quotes the part of the body where parsing stopped, so the example logs only its
+`message`. Any other error is logged as it is.
+
+Network logs are written at debug level, apart from a transport failure, which is logged as an
+error. At the default `minimumLevel` of info a call that got a response is not recorded, so your
+log would carry the id of a call nobody kept. Set `minimumLevel` to `LogLevel.debug` to keep the
+request and response beside it.
 
 ## Two things worth knowing
 

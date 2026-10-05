@@ -13,20 +13,21 @@ same way.
 flutter run
 ```
 
-No configuration, and nothing is uploaded. Logs go to the console, to the app's
-own SQLite database on the device, and to the floating button, which opens the
-on-device viewer. This is a real way to use CodeScout, not a limited trial of
-it.
+No configuration, and nothing is uploaded. Logs go to the console and to the
+floating button, which opens the on-device viewer. They are not written to the
+SDK's SQLite database, which only holds logs waiting to upload. This is a real
+way to use CodeScout, not a limited trial of it.
 
 The viewer has three tabs. Logs is everything the app has written, with a
 search box, a toggle per level showing how many of each are buffered, tag chips
 and a follow toggle for when the list moves faster than you can read. Network
-is the calls. Errors collapses errors and fatals by exact message, so twenty
-copies of one failure are one row, and the floating button carries a badge
-counting the ones you have not looked at. Two more screens sit behind icons in
-the sheet header: Data browses the storage this app registered, and Info tells
-you whether the connection works and what is being captured. The pill next to
-the logo is where you pair with a dashboard for live streaming.
+is the calls. Errors collapses errors and fatals by exact message and error
+text, so twenty copies of one failure are one row, and the floating button
+carries a badge counting the ones you have not looked at. Two more screens sit
+behind icons in the sheet header: Data browses the storage this app registered,
+and Info tells you whether the connection works and what is being captured.
+The pill next to the logo is where you pair with a dashboard for live
+streaming.
 
 ## Point it at a dashboard
 

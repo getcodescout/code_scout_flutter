@@ -222,12 +222,13 @@ void main() {
       // and nothing else to show.
       expect(await start('4K7Q2P'), isTrue);
 
+      final id = NetworkRequestData.newRequestID();
       LiveSessionClient.i.publish(LogEntry(
         level: LogLevel.debug,
         message: 'Network Response',
         sessionID: 'launch-1',
         isNetworkCall: true,
-        requestId: 'req-1',
+        requestId: id,
         callPhase: NetworkCallPhase.response,
         metadata: {
           'method': 'POST',
@@ -243,13 +244,75 @@ void main() {
           .single;
 
       expect(log['is_network_call'], isTrue);
-      expect(log['request_id'], 'req-1');
+      expect(log['request_id'], id);
       expect(log['call_phase'], 'response');
       expect(log['method'], 'POST');
       expect(log['url'], 'https://api.shop.dev/v2/pay');
       expect(log['status_code'], 402);
       // The whole metadata rides along for the inspector's bodies and headers.
       expect((log['metadata'] as Map)['body'], {'error': 'card_declined'});
+    });
+
+    // The dashboard's live Network pane pairs frames by request id, but only
+    // frames marked is_network_call. A log the app wrote about a call must
+    // carry the id and nothing that would make the browser read it as a phase.
+    test('a log about a call carries its id and nothing network shaped', () async {
+      expect(await start('4K7Q2P'), isTrue);
+
+      await CodeScout.instance.logMessage(
+        level: LogLevel.error,
+        message: 'Could not read GET /v2/cart',
+        error: "type 'int' is not a subtype of type 'double' in type cast",
+        // What an app describing its call might write. Promoted onto the
+        // frame, these would be a phase's method, url and status.
+        metadata: {
+          'field': 'tax_rate',
+          'method': 'GET',
+          'url': 'https://api.shop.dev/v2/cart',
+          'status_code': 200,
+        },
+        requestId: '3B8E0C51-7F2D-4A9E-B1C4-92D05E6A1F37',
+      );
+
+      await _until(() => frames.any((f) => (f['logs'] as List?)?.isNotEmpty ?? false));
+      final log = frames
+          .expand((f) => (f['logs'] as List? ?? const []).cast<Map<String, dynamic>>())
+          .single;
+
+      expect(log['request_id'], '3b8e0c51-7f2d-4a9e-b1c4-92d05e6a1f37',
+          reason: 'lowercased, as the phases are, or the two never pair');
+      expect(log['message'], 'Could not read GET /v2/cart');
+      expect(log['error'], contains("'int' is not a subtype"));
+      expect(log.containsKey('is_network_call'), isFalse);
+      expect(log.containsKey('call_phase'), isFalse);
+      expect(log.containsKey('method'), isFalse);
+      expect(log.containsKey('url'), isFalse);
+      expect(log.containsKey('status_code'), isFalse);
+      expect(log.containsKey('metadata'), isFalse);
+    });
+
+    // Only the upload needs a UUID. A live frame never reaches the database,
+    // so a custom interceptor's own id still pairs its call there.
+    test("an interceptor's own id still pairs a call in a live session", () async {
+      expect(await start('4K7Q2P'), isTrue);
+
+      LiveSessionClient.i.publish(LogEntry(
+        level: LogLevel.debug,
+        message: 'Network Request',
+        sessionID: 'launch-1',
+        isNetworkCall: true,
+        requestId: 'req-42',
+        callPhase: NetworkCallPhase.request,
+        metadata: {'method': 'GET', 'url': 'https://api.shop.dev/v2/cart'},
+      ));
+
+      await _until(() => frames.any((f) => (f['logs'] as List?)?.isNotEmpty ?? false));
+      final log = frames
+          .expand((f) => (f['logs'] as List? ?? const []).cast<Map<String, dynamic>>())
+          .single;
+
+      expect(log['request_id'], 'req-42');
+      expect(log['call_phase'], 'request');
     });
 
     test('an ordinary log does not drag its metadata onto the wire', () async {

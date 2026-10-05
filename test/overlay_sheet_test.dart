@@ -147,6 +147,68 @@ void main() {
     expect(find.text('nothing useful in this message'), findsOneWidget);
   });
 
+  // An id pasted from the dashboard or a bug report finds the call's phases
+  // and the app's own log about it together.
+  testWidgets('search finds a request id', (tester) async {
+    final id = NetworkRequestData.newRequestID();
+    LogBuffer.i.add(LogEntry(
+      level: LogLevel.debug,
+      message: 'Network Response',
+      sessionID: 'session',
+      isNetworkCall: true,
+      requestId: id,
+      callPhase: NetworkCallPhase.response,
+      metadata: const {'status_code': 200},
+    ));
+    LogBuffer.i.add(LogEntry(
+      level: LogLevel.error,
+      message: 'Could not read GET /v2/cart',
+      sessionID: 'session',
+      requestId: id,
+    ));
+    add('an unrelated log');
+
+    await pumpSheet(tester);
+    await tester.enterText(find.byType(TextField).first, id);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Network Response'), findsOneWidget);
+    expect(find.text('Could not read GET /v2/cart'), findsOneWidget);
+    expect(find.text('an unrelated log'), findsNothing);
+
+    await tester.enterText(find.byType(TextField).first, id.substring(0, 8));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Network Response'), findsOneWidget,
+        reason: 'the first block of the id is what a shortened copy keeps');
+    expect(find.text('Could not read GET /v2/cart'), findsOneWidget);
+  });
+
+  // A random UUID contains any given three digits often enough that a search
+  // for a status code would list calls that have nothing to do with it.
+  testWidgets('a short search does not match a request id', (tester) async {
+    void phase(String message, String id) => LogBuffer.i.add(LogEntry(
+          level: LogLevel.debug,
+          message: message,
+          sessionID: 'session',
+          isNetworkCall: true,
+          requestId: id,
+          callPhase: NetworkCallPhase.request,
+          metadata: const {'method': 'GET', 'url': 'https://api.shop.dev/v2/cart'},
+        ));
+    phase('Network Request, id starts with it', '4042c1f7-9b3e-4d2a-8e6f-1a2b3c4d5e6f');
+    phase('Network Request, id contains it', '7c1f4042-9b3e-4d2a-8e6f-1a2b3c4d5e6f');
+    add('Profile returned 404');
+
+    await pumpSheet(tester);
+    await tester.enterText(find.byType(TextField).first, '404');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Profile returned 404'), findsOneWidget);
+    expect(find.text('Network Request, id starts with it'), findsNothing);
+    expect(find.text('Network Request, id contains it'), findsNothing);
+  });
+
   // Two empty states, never one. "Nothing logged yet" is false the moment a
   // filter is what emptied the list, and it points a developer at their own
   // logging calls instead of at the control they set.
@@ -169,12 +231,13 @@ void main() {
   });
 
   testWidgets('the network tab shows calls, not phases', (tester) async {
+    final id = NetworkRequestData.newRequestID();
     LogBuffer.i.add(LogEntry(
       level: LogLevel.debug,
       message: 'Network Request',
       sessionID: 'session',
       isNetworkCall: true,
-      requestId: 'req-1',
+      requestId: id,
       callPhase: NetworkCallPhase.request,
       metadata: const {'method': 'POST', 'url': 'https://api.test/v2/pay'},
     ));
@@ -183,7 +246,7 @@ void main() {
       message: 'Network Response',
       sessionID: 'session',
       isNetworkCall: true,
-      requestId: 'req-1',
+      requestId: id,
       callPhase: NetworkCallPhase.response,
       metadata: const {'status_code': 201},
     ));

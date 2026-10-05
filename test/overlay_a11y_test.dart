@@ -66,6 +66,36 @@ void main() {
       }
     });
 
+    // The whole row opens the call, so the whole row is the target.
+    testWidgets("a log's Call link clears 44px", (tester) async {
+      final id = NetworkRequestData.newRequestID();
+      LogBuffer.i.add(LogEntry(
+        level: LogLevel.debug,
+        message: 'Network Request',
+        sessionID: 'session',
+        isNetworkCall: true,
+        requestId: id,
+        callPhase: NetworkCallPhase.request,
+        metadata: const {'method': 'GET', 'url': 'https://api.shop.dev/v2/cart'},
+      ));
+      LogBuffer.i.add(LogEntry(
+        level: LogLevel.error,
+        message: 'Could not read GET /v2/cart',
+        sessionID: 'session',
+        requestId: id,
+      ));
+      await pumpSheet(tester);
+      await tester.tap(find.text('Could not read GET /v2/cart'));
+      await tester.pumpAndSettle();
+
+      final link = tester.getSize(find.ancestor(
+        of: find.text('/v2/cart'),
+        matching: find.byType(InkWell),
+      ).first);
+      expect(link.height, greaterThanOrEqualTo(GlobalVars.minTouchTarget),
+          reason: 'the Call link is only ${link.height}px tall');
+    });
+
     // Visible ink can be smaller than the target: padding does the reach, which
     // is what keeps a dense debug tool dense.
     testWidgets('a filter chip is tappable across the whole row height', (tester) async {

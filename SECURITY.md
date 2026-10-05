@@ -25,8 +25,8 @@ This SDK runs inside other people's apps, so the things worth reporting are:
 - Redaction that does not redact. Whatever an app names in `RedactionBehavior` is replaced the
   moment a log is captured, before anything is written to SQLite and long before a batch is packed
   for upload, so the original should never exist on disk or on the wire. If you find a path where
-  it does, that is a real bug and we want it. The console, the overlay's clipboard and the network
-  manager's in-memory pairing are deliberate exceptions, covered further down.
+  it does, that is a real bug and we want it. The network manager's in-memory pairing, a log's
+  error text and a body that is not valid JSON are deliberate exceptions, covered further down.
 - The project secret escaping the SDK. It should never appear in a log line, in the text of an
   exception, or in anything a crash reporter would pick up. The crash reporter is the worst of the
   three, because it hands the secret to a third party without anyone deciding to. The overlay's
@@ -133,13 +133,24 @@ over 32 KB is cut to 32 KB with a note saying how big it really was, because upl
 off somebody's phone spends data they never agreed to spend. That is a size limit rather than a
 privacy setting, and `maxBodyBytes: 0` turns it off.
 
-**Redaction covers what is stored and uploaded, not every surface a value crosses.** Three paths
-keep the real value on the device on purpose. The console printer prints a hand-written log's
-metadata exactly as the app passed it, because that map is redacted on its way into SQLite rather
-than on the entry itself. Copying a log out of the overlay copies the same raw map. And the
-network manager holds the original request in memory for up to two minutes while it waits for the
-matching response. None of the three writes to disk or uploads anything, which is why they are not
-bugs.
+**Redaction covers what is stored and uploaded, not every surface a value crosses.** A named value
+is replaced on the log entry as it is captured, so the console printer and the overlay, its copy
+buttons included, show `[redacted]` too. One path keeps the real value on the device on purpose:
+the network manager holds the original request in memory for up to two minutes while it waits for
+the matching response. It writes nothing to disk and uploads nothing, which is why it is not a bug.
+Redaction finds values by name in headers, JSON bodies and metadata, so two things that are stored
+and uploaded are outside it.
+
+**The error you log is not redacted.** What is stored is the error's `toString()`, and some
+exceptions quote what they failed on. A `FormatException` from `jsonDecode` quotes the part of the
+body where parsing stopped, so a value named in `bodyKeys` can reach a log's error text, which is
+stored and uploaded as it is. If the body can hold one, log the exception's `message` rather than
+the exception.
+
+**A body that is not valid JSON is not scanned.** Body keys are found by reading the body as JSON.
+A broken body, or the form-encoded string `package:http` sends for a `Map` body, has no keys to
+match, so nothing in it is redacted. A form body's `password=...` is stored and uploaded as sent,
+even under `RedactionBehavior.recommended()`.
 
 **Logs are stored unencrypted in the app's own SQLite database.** They live in your app's private
 storage, protected by the same OS sandbox as the rest of your app data, in `code_scout.db`, opened

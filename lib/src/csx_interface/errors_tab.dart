@@ -12,12 +12,12 @@ import 'package:flutter/material.dart';
 
 /// What broke, which is the reason the overlay gets opened.
 ///
-/// Flat and counted by exact message, not by the server's fingerprint.
-/// `internal/domain/fingerprint.go` blanks the varying parts of a message so
-/// two "User N not found" are one problem, and porting that here would put one
-/// algorithm in two repos to drift apart. On device there are at most 500 logs
-/// from one launch, and exact-message counting catches the case that matters,
-/// which is the same failure firing over and over.
+/// Flat and counted by exact message and error text, not by the server's
+/// fingerprint. `internal/domain/fingerprint.go` blanks the varying parts of a
+/// message so two "User N not found" are one problem, and porting that here
+/// would put one algorithm in two repos to drift apart. On device there are at
+/// most 500 logs from one launch, and exact-message counting catches the case
+/// that matters, which is the same failure firing over and over.
 class ErrorsTab extends StatefulWidget {
   const ErrorsTab({super.key});
 

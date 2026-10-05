@@ -49,7 +49,12 @@ void main() {
   setUp(LogBuffer.i.clear);
   tearDown(LogBuffer.i.clear);
 
-  Future<void> shoot(WidgetTester tester, OverlayTab tab, String name) async {
+  Future<void> shoot(
+    WidgetTester tester,
+    OverlayTab tab,
+    String name, {
+    Future<void> Function()? then,
+  }) async {
     tester.view.physicalSize = _size * _scale;
     tester.view.devicePixelRatio = _scale;
     addTearDown(tester.view.reset);
@@ -64,6 +69,10 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
+    if (then != null) {
+      await then();
+      await tester.pumpAndSettle();
+    }
 
     final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
 
@@ -100,7 +109,27 @@ void main() {
     await _seedStory(tester);
     await shoot(tester, OverlayTab.errors, 'errors');
   });
+
+  // A 200 whose body no longer matches the app's model, opened on its
+  // Response pane, with the app's own log about it above the body.
+  testWidgets('network detail with a linked parse failure', (tester) async {
+    await _seedStory(tester, cartParseFailure: true);
+    await shoot(
+      tester,
+      OverlayTab.network,
+      'network-linked-log',
+      then: () async {
+        await tester.tap(find.text('/v2/cart'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Response'));
+      },
+    );
+  });
 }
+
+/// The cart call's id, fixed so the parse failure can name it. Every id is a
+/// UUID because the SDK drops any request id that is not one.
+const _cartCall = '3b8e0c51-7f2d-4a9e-b1c4-92d05e6a1f37';
 
 /// Without this every glyph is a box.
 ///
@@ -191,7 +220,7 @@ Future<void> _loadMonospace() async {
 /// second and every network call came out at 0ms, which is a screenshot quietly
 /// claiming the product cannot measure a duration. The waits sit inside
 /// `runAsync` because the test's own clock is fake and would skip them.
-Future<void> _seedStory(WidgetTester tester) async {
+Future<void> _seedStory(WidgetTester tester, {bool cartParseFailure = false}) async {
   Future<void> pause(int ms) =>
       tester.runAsync(() => Future<void>.delayed(Duration(milliseconds: ms)));
 
@@ -201,6 +230,7 @@ Future<void> _seedStory(WidgetTester tester) async {
     Set<String> tags = const {},
     Map<String, dynamic>? metadata,
     String? error,
+    String? requestId,
     int after = 40,
   }) async {
     LogBuffer.i.add(LogEntry(
@@ -210,6 +240,7 @@ Future<void> _seedStory(WidgetTester tester) async {
       tags: tags,
       metadata: metadata,
       error: error,
+      requestId: requestId,
     ));
     await pause(after);
   }
@@ -222,6 +253,8 @@ Future<void> _seedStory(WidgetTester tester) async {
     String url, {
     int? status,
     String? failure,
+    Map<String, dynamic>? headers,
+    Object? body,
     int took = 120,
   }) async {
     LogBuffer.i.add(LogEntry(
@@ -246,6 +279,8 @@ Future<void> _seedStory(WidgetTester tester) async {
         'url': url,
         'status_code': ?status,
         'message': ?failure,
+        'headers': ?headers,
+        'body': ?body,
       },
     ));
     await pause(40);
@@ -253,14 +288,42 @@ Future<void> _seedStory(WidgetTester tester) async {
 
   await log(LogLevel.info, 'App launched', tags: {'lifecycle'});
   await log(LogLevel.info, 'User signed in', tags: {'auth'}, metadata: {'method': 'oauth'});
-  await call('r1', 'GET', 'https://api.shop.dev/v2/cart', status: 200, took: 96);
+  await call(
+    _cartCall,
+    'GET',
+    'https://api.shop.dev/v2/cart',
+    status: 200,
+    took: 96,
+    headers: cartParseFailure ? const {'content-type': 'application/json'} : null,
+    body: cartParseFailure
+        ? const {
+            'items': [
+              {'sku': 'mug-01', 'qty': 1, 'price_cents': 1899},
+              {'sku': 'tee-02', 'qty': 1, 'price_cents': 2400},
+              {'sku': 'pin-03', 'qty': 2, 'price_cents': 350},
+            ],
+            'subtotal_cents': 4999,
+            'tax_rate': 0,
+          }
+        : null,
+  );
+  if (cartParseFailure) {
+    // tax_rate came back as 0, an int, and the model casts it to a double.
+    await log(
+      LogLevel.error,
+      'Could not read GET /v2/cart',
+      tags: {'cart'},
+      error: "type 'int' is not a subtype of type 'double' in type cast",
+      requestId: _cartCall,
+    );
+  }
   await log(LogLevel.info, 'Checkout started', tags: {'checkout'});
   await log(LogLevel.warning, 'Token expired, refreshing', tags: {'auth'});
-  await call('r2', 'POST', 'https://api.shop.dev/v2/auth/refresh', status: 401, took: 210);
+  await call('0e7d2f4a-5b1c-4f8e-9a3d-6c2b1e0f7a95', 'POST', 'https://api.shop.dev/v2/auth/refresh', status: 401, took: 210);
   // 401 rather than a timeout: the retry reused the token the refresh had just
   // failed to replace. The dashboard's seed tells the same story, and a film
   // that says 401 beside a screenshot saying "error" is worse than no film.
-  await call('r3', 'POST', 'https://api.shop.dev/v2/pay', status: 401, took: 380);
+  await call('c4a9e1b7-2d6f-4e3a-8b5c-1f0d9e7a6b24', 'POST', 'https://api.shop.dev/v2/pay', status: 401, took: 380);
   await log(
     LogLevel.error,
     'Payment declined',

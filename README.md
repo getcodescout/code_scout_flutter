@@ -130,13 +130,31 @@ final talker = Talker(observer: CodeScoutTalkerObserver());
 ### Initialize
 
 CodeScout needs a `BuildContext` to place its floating button into your widget tree, so `init()`
-runs from inside a widget after the first frame rather than at the top of `main()`. That is where
-the `context` in the sample below comes from.
+runs from a widget inside your `MaterialApp`, after the first frame, rather than at the top of
+`main()`. The button goes into the `Overlay` that `MaterialApp` builds, so a context from above it
+has nothing to insert into. That is where the `context` in the sample below comes from.
 
 ```dart
 import 'package:code_scout/code_scout.dart';
+import 'package:flutter/material.dart';
 
-class _AppState extends State<App> {
+void main() => runApp(const App());
+
+class App extends StatelessWidget {
+  const App({super.key});
+
+  @override
+  Widget build(BuildContext context) => const MaterialApp(home: Home());
+}
+
+class Home extends StatefulWidget {
+  const Home({super.key});
+
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+class _HomeState extends State<Home> {
   @override
   void initState() {
     super.initState();
@@ -160,6 +178,10 @@ class _AppState extends State<App> {
       );
     });
   }
+
+  @override
+  Widget build(BuildContext context) =>
+      const Scaffold(body: Center(child: Text('Hello')));
 }
 ```
 
@@ -259,13 +281,40 @@ proxy or timeout you had configured are quietly lost.
 
 #### How it works
 
-Each call writes one log when the request goes out and a second when it comes back, and that
-second one is either a response or an error but never both. The pair shares a request id, which
-is how the panel and the dashboard know to show them as a single row.
+Each call writes one log when the request goes out and at most one more, a response or an error
+but never both. They share a request id, which is how the panel and the dashboard know to show them
+as a single row. A call whose answer was never recorded keeps only its request log and shows as
+pending. [Network inspection](https://codescout.tech/docs/guides/network/#up-to-two-logs-per-call)
+lists when that happens.
 
 If your Network tab stays empty, open the panel and tap the info icon. Every companion package
 announces itself to the SDK when you construct it, so the Info screen can tell you whether an
 interceptor is genuinely missing or is simply installed and has not seen a call yet.
+
+#### When a response stops matching your model
+
+Every logging call takes an optional `requestId`. Pass the call's id when you log the failure, and
+the error is shown with the call that returned the body. `code_scout_dio` and `code_scout_http` put
+the id on the response as `codeScoutRequestId`:
+
+```dart
+final response = await dio.get<Map<String, dynamic>>('/v2/cart');
+try {
+  return Cart.fromJson(response.data!);
+} catch (e, st) {
+  CodeScout.instance.e('Could not read GET /v2/cart',
+      error: e, stackTrace: st, requestId: response.codeScoutRequestId);
+  rethrow;
+}
+```
+
+The panel lists the error on the call's Response pane, above the body, and the dashboard lists it
+above the call's tabs, so the exception and the JSON that caused it are read together. The dashboard
+does this from version 1.2.0. An older one stores the log and finds it with `request:`, but does not
+show it with the call. The log stays an ordinary log, so a call that answered 200 is still a 200.
+Network logs are written at debug, so `minimumLevel` has to be `LogLevel.debug` or lower, or the
+call will not have been kept. The getter needs `code_scout_dio` or `code_scout_http` 1.1.0. The
+whole workflow is in [When the API changes under you](https://codescout.tech/docs/guides/api-changes/).
 
 ### Name the person using the app
 
@@ -365,7 +414,8 @@ you can read. Tap any row to see its error, stack trace and metadata laid out pr
 than printed as one long line.
 
 **Network** shows one row per call with its status, how long it took, and everything it sent and
-received, split into request, response and timing.
+received, split into request, response and timing. Anything your app logged about a call with its
+request id is listed at the top of the response.
 
 **Errors** shows errors and fatals on their own and counts them, so the same failure happening
 fifty times is a single line instead of the whole screen.

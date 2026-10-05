@@ -152,6 +152,13 @@ class CallWindow {
   }
 }
 
+/// A call's colour wherever it is drawn: failed, still in flight, or done.
+Color callColour(OverlayCall call) {
+  if (call.failed) return CSxColors.error;
+  if (call.duration == null) return CSxColors.warning;
+  return CSxColors.debug;
+}
+
 class CallRow extends StatelessWidget {
   const CallRow({super.key, required this.call, required this.window});
 
@@ -161,11 +168,7 @@ class CallRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pending = call.duration == null && !call.failed;
-    final colour = call.failed
-        ? CSxColors.error
-        : pending
-            ? CSxColors.warning
-            : CSxColors.debug;
+    final colour = callColour(call);
     final (left, width) = window.placeOf(call);
 
     return InkWell(
@@ -179,7 +182,7 @@ class CallRow extends StatelessWidget {
           children: [
             Row(
               children: [
-                _Method(call.method),
+                CallMethod(call.method),
                 const SizedBox(width: 7),
                 Expanded(
                   child: Text(
@@ -235,8 +238,8 @@ class CallRow extends StatelessWidget {
   }
 }
 
-class _Method extends StatelessWidget {
-  const _Method(this.method);
+class CallMethod extends StatelessWidget {
+  const CallMethod(this.method, {super.key});
 
   final String method;
 

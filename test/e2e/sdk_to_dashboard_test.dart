@@ -121,15 +121,24 @@ void main() {
     NetworkManager.i.processNetworkResponse(
         NetworkResponseData(statusCode: 201, body: {'ok': true}), requestID);
 
+    // What an app writes when the body it got no longer fits its model. The
+    // request id is the only link to the call.
+    await CodeScout.instance.logMessage(
+      level: LogLevel.error,
+      message: 'e2e could not read the body',
+      error: "type 'int' is not a subtype of type 'double' in type cast",
+      requestId: requestID,
+    );
+
     // Identity is opt-in and lands mid-launch, which is the interesting case:
-    // the two logs above were already written before anyone had a name.
+    // the logs above were already written before anyone had a name.
     await CodeScout.instance.setUser(_userID, traits: {'plan': 'free'});
 
     // The network pair is fire-and-forget — the manager does not await the
     // SQLite write — so wait for the rows rather than guessing at a delay.
     launched = CodeScout.instance.currentSession;
 
-    await _awaitStored(4);
+    await _awaitStored(5);
     await LogSyncWorker.i.flush();
   });
 
@@ -168,6 +177,21 @@ void main() {
         reason: 'both phases belong to one call, or the dashboard cannot pair '
             'them back into a row');
     expect(calls.map((c) => c['call_phase']).toSet(), {'request', 'response'});
+  });
+
+  // The log the app wrote about that call must land as an ordinary log that
+  // request: finds next to the call, or the link exists only on the device.
+  test('a log about a call arrives linked to it, as an app log', () async {
+    final found = await dash.exportLogs(query: 'request:$requestID');
+
+    expect(found.map((l) => l['message']).toSet(),
+        {'Network Request', 'Network Response', 'e2e could not read the body'},
+        reason: 'request: should find the call and the log about it together');
+    final log = found.firstWhere((l) => l['message'] == 'e2e could not read the body');
+    expect(log['request_id'], requestID);
+    expect(log['is_network_call'], isFalse);
+    expect(log['call_phase'], isNull);
+    expect(log['error'], contains("'int' is not a subtype"));
   });
 
   // Runs before the three that filter on session fields, because it separates

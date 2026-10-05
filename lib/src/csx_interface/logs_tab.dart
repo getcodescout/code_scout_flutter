@@ -136,10 +136,19 @@ class _LogsTabState extends State<LogsTab> {
         entry.error?.toString() ?? '',
         tags.join(' '),
       ].join(' ').toLowerCase();
-      if (!haystack.contains(needle)) return false;
+      if (!haystack.contains(needle) && !_startsRequestId(entry.requestId, needle)) {
+        return false;
+      }
     }
     return true;
   }
+
+  /// An id pasted from the dashboard or a bug report finds the call's phases
+  /// and the app's logs about it together. Matched from the start and on at
+  /// least eight characters, the first block of a UUID, because a short query
+  /// such as a status code turns up somewhere inside unrelated random ids.
+  static bool _startsRequestId(String? id, String needle) =>
+      id != null && needle.length >= 8 && id.toLowerCase().startsWith(needle);
 
   @override
   Widget build(BuildContext context) {
@@ -307,21 +316,34 @@ class _TagRow extends StatelessWidget {
 
 /// One log. Two lines: the level and the time, then the message.
 class LogRow extends StatelessWidget {
-  const LogRow({super.key, required this.entry});
+  const LogRow({
+    super.key,
+    required this.entry,
+    this.showError = false,
+    this.divider = true,
+  });
 
   final LogEntry entry;
+
+  /// A third line with the error, for a list short enough that the reason is
+  /// worth reading without opening the log.
+  final bool showError;
+
+  /// Off for the last row inside a bordered card, whose own edge closes it.
+  final bool divider;
 
   @override
   Widget build(BuildContext context) {
     final colour = levelColor(entry.level.name);
     final isError = entry.level.value >= LogLevel.error.value;
+    final error = showError ? entry.error?.toString() : null;
 
     return InkWell(
       onTap: () => OverlayNavigator.of(context).push(LogDetail(entry: entry)),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: CSxColors.border)),
+        decoration: BoxDecoration(
+          border: divider ? const Border(bottom: BorderSide(color: CSxColors.border)) : null,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -348,6 +370,15 @@ class LogRow extends StatelessWidget {
                 fontSize: 12.5,
               ),
             ),
+            if (error != null && error.isNotEmpty) ...[
+              const SizedBox(height: 3),
+              Text(
+                error,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: mono.copyWith(color: CSxColors.muted, fontSize: 10.5),
+              ),
+            ],
           ],
         ),
       ),

@@ -8,6 +8,7 @@ import 'package:code_scout/src/log/log_persistence_service.dart';
 import 'package:code_scout/src/log/log_printer.dart';
 import 'package:code_scout/src/log/log_sync_worker.dart';
 import 'package:code_scout/src/utils/stack_trace_parser.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:uuid/uuid.dart';
 
 class LogEntry {
@@ -22,6 +23,15 @@ class LogEntry {
   final DateTime? timestamp;
   final bool isNetworkCall;
 
+  /// The HTTP call this log belongs to, or null. A UUID is kept lowercase.
+  ///
+  /// The server stores this column as a UUID, and one value that does not
+  /// parse fails the whole upload, which the sync worker then retries forever
+  /// with every later log queued behind it. So [toJson] writes nothing but a
+  /// UUID in the standard 8-4-4-4-12 form. An app's own log drops anything
+  /// else when it is built, so a backend's `X-Request-Id` or a ULID never gets
+  /// that far. A network phase keeps the id its interceptor minted, because
+  /// that id is what pairs its call in the panel and in a live session.
   final String? requestId;
   final NetworkCallPhase? callPhase;
 
@@ -42,10 +52,11 @@ class LogEntry {
     Map<String, dynamic>? metadata,
     this.tags = const {},
     this.isNetworkCall = false,
-    this.requestId,
+    String? requestId,
     this.callPhase,
   })  : id = const Uuid().v4(),
         timestamp = DateTime.now().toUtc(),
+        requestId = _canonicalRequestId(requestId, isNetworkCall: isNetworkCall),
         // Redacted here, at capture, rather than only on the way to JSON.
         //
         // toJson() stripped it, so SQLite and the upload were clean and the
@@ -78,6 +89,48 @@ class LogEntry {
     _stackCallDetails = parser.stackCallDetails;
   }
 
+  static final RegExp _uuid = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    caseSensitive: false,
+  );
+
+  static bool _warnedAboutRequestId = false;
+
+  /// Where the warning about a dropped request id is written. Replaceable so a
+  /// test can read what was said.
+  @visibleForTesting
+  static void Function(String message) requestIdWarning = (message) => log(message);
+
+  /// The warning is said once per process, so a test that wants to see it
+  /// again has to put it back.
+  @visibleForTesting
+  static void resetRequestIdWarning() => _warnedAboutRequestId = false;
+
+  /// Lowercased, because the live frame carries the id as a string and the
+  /// dashboard pairs phases by comparing strings.
+  ///
+  /// The dropped value is never repeated in the warning. An app that passes
+  /// the wrong header here may be passing a token.
+  static String? _canonicalRequestId(String? raw, {required bool isNetworkCall}) {
+    if (raw == null) return null;
+    if (_uuid.hasMatch(raw)) return raw.toLowerCase();
+    if (!_warnedAboutRequestId) {
+      _warnedAboutRequestId = true;
+      requestIdWarning(
+        'CodeScout: dropped a request id that is not a UUID, which the server '
+        'could not store. Pass the codeScoutRequestId that code_scout_dio or '
+        'code_scout_http put on the response, or mint ids with '
+        'NetworkRequestData.newRequestID() in your own interceptor. Said once '
+        'per launch.',
+      );
+    }
+    return isNetworkCall ? raw : null;
+  }
+
+  /// Null unless the id is a UUID in the standard form.
+  static String? _uploadableRequestId(String? id) =>
+      id != null && _uuid.hasMatch(id) ? id : null;
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -98,7 +151,7 @@ class LogEntry {
       'tags': jsonEncode(tags?.toList() ?? []),
       'timestamp': timestamp?.toIso8601String(),
       'is_network_call': isNetworkCall ? 1 : 0,
-      'request_id': requestId,
+      'request_id': _uploadableRequestId(requestId),
       'call_phase': callPhase?.name,
     };
   }

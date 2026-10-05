@@ -7,7 +7,7 @@ This file provides guidance to AI coding agents when working with the `code_scou
 `code_scout` is a Flutter SDK that captures application logs and network requests, stores them locally in SQLite, and periodically syncs them to a remote CodeScout server via compressed tar.gz uploads.
 
 **Package name:** `code_scout`
-**Version:** 1.4.0 (published)
+**Version:** 1.6.0 in `pubspec.yaml`. pub.dev had 1.5.3 when last checked, on 2026-10-06.
 **Dart SDK:** ^3.10.0 | **Flutter:** >=3.38.0
 
 **Both numbers are derived, not chosen, and neither is arbitrary.** The Flutter one follows the
@@ -42,7 +42,7 @@ Network interception is provided via separate companion packages to keep the cor
 These live under `packages/` in this repo. A companion package exists when an integration needs a
 third-party dependency the core should not carry — `dio`, `http`, `talker`. That rule is why the
 database browser is *not* one: it needs nothing the core does not already have, since sqflite backs
-the log store and the key-value adapter takes closures rather than naming `shared_preferences`. Their pubspecs depend on `code_scout: ^1.0.0` (hosted). The example app uses `dependency_overrides` to resolve the path dep for local development.
+the log store and the key-value adapter takes closures rather than naming `shared_preferences`. Their pubspecs depend on `code_scout: ^1.5.0` (hosted). The floor stays at 1.5.0 for `code_scout_dio` and `code_scout_http` 1.1.0, because their `codeScoutRequestId` getters use nothing newer. Passing that id to `requestId:` needs core 1.6.0, so core 1.6.0 has to reach pub.dev before those two. The example app uses `dependency_overrides` to resolve the path dep for local development.
 
 ## Commands
 
@@ -68,7 +68,7 @@ throwaway database and port:
 cd ../code_scout && make test-sdk-e2e
 ```
 
-It is the only place the wire contract is not written down on both sides. Two
+It is the only place the wire contract is not written down on both sides. Three
 files:
 
 - `sdk_to_dashboard_test.dart` logs through the public API and reads the rows
@@ -78,16 +78,23 @@ files:
   dashboard's own `/live/{sid}/db*` routes. It is what covers the database
   browser, where the dashboard's Playwright tests only ever talk to a stub
   device.
+- `linked_log_test.dart` makes a real call through `CodeScoutDioInterceptor` to
+  a server the test starts, logs the failure to read its body with the id from
+  `response.codeScoutRequestId`, and checks that the dashboard links the two:
+  in the export, and under "Logged by the app" on the call's page. It also
+  checks that an id which is not a UUID is dropped rather than failing every
+  upload after it. This test is why `dio` and `code_scout_dio` are dev
+  dependencies of the core. A dev dependency never reaches an app.
 
-`dashboard.dart` is the shared client for both: signing in, making a project,
-minting a pairing code, posting a form. One account for every file, because
-registration only happens on a fresh instance and a second email would have
-nobody to log in as.
+`dashboard.dart` is the shared client for all three: signing in, making a
+project, minting a pairing code, posting a form. One account for every file,
+because registration only happens on a fresh instance and a second email would
+have nobody to log in as.
 
 Two things about the host are worth knowing, since both failed silently the
 first time. `TestWidgetsFlutterBinding` installs an `HttpOverrides` that answers
-every request with 400 without opening a socket, so both files clear it; it
-takes out the live WebSocket as well as the uploader. And
+every request with 400 without opening a socket, so every file clears it; it
+takes out the live WebSocket, the uploader and a dio call alike. And
 `getTemporaryDirectory()` is a platform channel with nothing behind it here, so
 `installScratchPaths` replaces it. Left alone, the compressor throws inside the
 sync worker's own catch, which reports through `dart:developer` where the test
@@ -162,7 +169,7 @@ packages/
 - **Log data flow:** `CodeScout.d()` / `.log()` / `.logMessage()` → `LogEntry.processLogEntry()` → `CSxPrinter` (console) + `LogPersistenceService` (SQLite) → `LogSyncWorker` (periodic) → `LogCompressor` (tar.gz in isolate) → `dart:io` HTTP POST to server
 - **Network interception:** Companion packages (`code_scout_dio`, `code_scout_http`) call `NetworkManager.i.processNetworkRequest/Response/Error()`. Each network call gets a unique `requestId` to correlate request→response→error phases. Stale requests are evicted after 2 minutes.
 - **Configuration:** All behavior controlled via `CodeScoutConfiguration` passed to `CodeScout.instance.init()`. Includes `LoggingBehavior` (filtering), `LogSyncBehavior` (timing), `ProjectCredentials` (server auth), `RealTimeConfig`.
-- **Zero HTTP dependency:** All server communication uses `dart:io` `HttpClient` directly — no `http` or `dio` in the core package.
+- **Zero HTTP dependency:** All server communication uses `dart:io` `HttpClient` directly, and the core's `dependencies` have no `http` or `dio`. `dio` and `code_scout_dio` are dev dependencies only, for `test/e2e/linked_log_test.dart`, and a dev dependency never reaches an app.
 - **Sync atomicity:** Logs are marked `sync_status=1` before upload, rolled back on failure, deleted on success. Concurrent syncs are prevented via a `_syncing` guard.
 - **The package version is a constant** in `lib/src/version.dart`, because Dart cannot read its own pubspec at runtime. Bump it in the same commit as `pubspec.yaml`; a test compares the two and fails when they drift. It goes on the wire as `sdk_version` on every session, so the dashboard can show which build an app is running.
 - **`SessionRecord.toRow()` is the base shape and `toJson()` builds on it, never the reverse.** It used to be the other way round, which made the wire shape unextendable: any key added for the server also landed in the SQLite INSERT, hit a column that does not exist, and failed *every* session write on the device. `sdk_version` is wire-only and is what would have triggered it.
@@ -209,6 +216,12 @@ await CodeScout.instance.logMessage(
   level: LogLevel.error,
   message: 'Critical failure',
 );
+
+// Any of them takes requestId: to tie the log to one captured HTTP call, with
+// the id from the companion package's codeScoutRequestId (below). The log
+// stays an ordinary log. See Linked logs.
+scout.e('Could not read GET /v2/cart',
+    error: e, stackTrace: st, requestId: response.codeScoutRequestId);
 ```
 
 ### Network Interception
@@ -220,7 +233,39 @@ dio.interceptors.add(CodeScoutDioInterceptor());
 // HTTP — install code_scout_http package
 import 'package:code_scout_http/code_scout_http.dart';
 final client = CodeScoutHttpClient(client: http.Client());
+
+// The id each package gave a call, to pass as requestId: (both 1.1.0). Null
+// when the call did not go through the interceptor or the wrapper.
+response.codeScoutRequestId;   // dio Response, http BaseResponse
+exception.codeScoutRequestId;  // dio DioException
+request.codeScoutRequestId;    // dio RequestOptions, http BaseRequest
 ```
+
+### Linked logs
+
+A log written with `requestId:` is about one call and stays an ordinary log: `is_network_call` 0
+and `call_phase` null on the wire. These rules are what keep it from changing the call it names:
+
+- **`LogBuffer.calls()` pairs only `isNetworkCall` entries.** A linked log goes into
+  `OverlayCall.logs`, never into `phases`, and one whose call is not in the buffer makes no row.
+  Do not loosen the check to `requestId != null`. Once a call's request phase has left the buffer,
+  `_requestMeta` reads the method and path from the newest phase with a `request` map, and an app
+  log is newer than its call, so its own `metadata['request']` would name the call. A log whose
+  call was never kept would become a phantom pending row with no method or path.
+- **An app log never sets `isNetworkCall`.** `logMessage`, which `log` and the shorthands call,
+  builds its `LogEntry` with the default `false`. A network entry skips the metadata redaction an
+  app log gets, because `NetworkRequestData` and its two siblings redact as they build it, and it
+  keeps no stack trace.
+- **Only a UUID request id is uploaded.** `LogEntry` keeps an 8-4-4-4-12 UUID, in any case, and
+  lowercases it. An app log drops anything else when it is built. A network phase keeps a non-UUID
+  id its interceptor minted, so its call still pairs in the panel and in a live session, and
+  `toJson` writes `request_id` as null for it. Either way the SDK warns once per launch through
+  `dart:developer` and never prints the value, since an app passing the wrong header may be passing
+  a token.
+- **The reason is the server.** It decodes `request_id` as a UUID, and one value that does not
+  parse fails the whole batch with a 500. The sync worker rolls the batch back and sends it again,
+  oldest logs first, forever: five failures in a row buy a five-minute pause, never a drop, so every
+  later log on the device queues behind the bad one.
 
 ### Overlay Controls
 ```dart
@@ -340,6 +385,7 @@ Sessions outlive their logs by one step: a batch sends the session records its l
 - Server backoff: 429/503 read `Retry-After` and pause without counting toward the failure counter; 413 halves the batch. `lib/src/log/sync_backoff.dart`. Five consecutive real failures buy a 5 minute pause, not a stop, and the counter resets after it
 - Session sampling: `LoggingBehavior.sessionSampleRate`, lowered further by the project's server-side rate from `/api/validate`, drawn once per launch in `init()`. The gate is in `processLogEntry`, above the SQLite write and below the console and overlay
 - Live sessions: `lib/src/live/live_session_client.dart`, a `dart:io` WebSocket to `{link}api/live/socket`. Pairs with a six character code typed into the overlay's Live tab, then streams every log as it happens. `publish()` sits **above** the sampling gate in `processLogEntry` — somebody watching deliberately should see everything
+- Linked logs: `requestId:` on every logging call ties an app log to one captured call, with the id from `codeScoutRequestId` on a dio or http response. The panel lists the log on the call's Response pane above the body, and Copy call carries it in the same place. The log's own detail has a Call section that opens the call, the console prints the id, copying the log adds a `request <id>` line, and the Logs search finds an id from its first eight characters. The call's status, duration and counts never change. The rules are under Linked logs above
 
 ### Incomplete / TODO
 - Nothing outstanding for 1.0 in the SDK.
@@ -347,8 +393,8 @@ Sessions outlive their logs by one step: a batch sends the session records its l
 ### Publishing
 
 **Everything here is published**, so it is all released and in people's apps. Checked against the
-pub.dev API on 2026-08-09, not remembered: `code_scout` 1.4.0, `code_scout_dio` 1.0.1,
-`code_scout_http` 1.0.1, `code_scout_talker` 1.0.0. Notes in this file have twice claimed a
+pub.dev API on 2026-10-06, not remembered: `code_scout` 1.5.3, `code_scout_dio` 1.0.4,
+`code_scout_http` 1.0.4, `code_scout_talker` 1.0.3. Notes in this file have twice claimed a
 package was unpublished when it was not, so **ask pub.dev rather than trusting a line like this
 one**.
 

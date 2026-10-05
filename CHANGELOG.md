@@ -1,3 +1,58 @@
+## 1.6.0
+
+### Added
+
+- **A log can name the HTTP call it is about.** `logMessage`, `log` and the
+  shorthands `v`, `d`, `i`, `w`, `e` and `f` take an optional `requestId`. When
+  a response body no longer matches your model and `fromJson` throws, pass the
+  call's id with the error:
+
+  ```dart
+  scout.e('Could not read GET /v2/cart',
+      error: e, stackTrace: st, requestId: response.codeScoutRequestId);
+  ```
+
+  `codeScoutRequestId` comes from `code_scout_dio` 1.1.0 and `code_scout_http`
+  1.1.0. On the dashboard, `request:<id>` finds the call and the log together.
+  The log stays an ordinary app log: it is not a network log, so it never
+  changes the call's status, duration or the Network tab's counts. A call that
+  answered 200 is still a 200.
+- **The in-app panel puts the two side by side.** A call's Response pane lists
+  what the app logged about it, above the body, and **Copy call** includes
+  those logs. A log about a call gets a
+  **Call** section that opens it. When the call is not in the panel, the
+  section shows the full id with a Copy button instead. At the default
+  `minimumLevel` of info that is the usual case, because network logs are
+  written at debug; set `minimumLevel: LogLevel.debug` to keep the call and
+  its body.
+- The console prints the request id on any log that has one, not only on
+  network logs. Copying a log includes a `request <id>` line, in full, and the
+  Logs tab's search finds a request id from its first eight characters or
+  more, so a short search such as a status code does not match inside one.
+
+### Changed
+
+- **A request id that is not a UUID never reaches the server.** The server
+  stores request ids as UUIDs, and one value that did not parse failed the
+  whole upload, which was then retried forever with every later log queued
+  behind it. A log given a backend's own `X-Request-Id`, a ULID or an empty
+  string now keeps everything except the id. A custom interceptor that mints
+  its own ids for `NetworkRequestData` keeps them on the device, so its calls
+  still pair in the panel and in a live session, but an id that is not a UUID
+  is uploaded as null, and the dashboard cannot pair those phases. Use
+  `NetworkRequestData.newRequestID()`. Either way the SDK says once, through
+  `dart:developer`, that it dropped an id. The value itself is never printed.
+- A request id that is a UUID is kept lowercase, so an id copied in uppercase
+  still matches the call's own.
+
+### Fixed
+
+- A call with a request and no response no longer says its response fell out
+  of the panel. The panel drops its oldest logs first, so a response cannot go
+  before its request. The Response pane now says the call may still be
+  running, and that the SDK holds a request for two minutes and can drop a
+  response that arrives later.
+
 ## 1.5.3
 
 ### Fixed

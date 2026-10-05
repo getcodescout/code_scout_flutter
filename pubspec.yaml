@@ -1,6 +1,6 @@
 name: code_scout
 description: 'Logging and network inspection for Flutter, with a self-hosted dashboard. Search logs from every device, watch one live, or read them on the phone with no server at all.'
-version: 1.5.3
+version: 1.6.0
 homepage: https://codescout.tech
 repository: https://github.com/getcodescout/code_scout_flutter
 
@@ -28,6 +28,13 @@ dev_dependencies:
   # So the end to end test can answer getTemporaryDirectory(), which is a
   # platform channel and has nothing to answer it on a test host.
   path_provider_platform_interface: ^2.1.2
+  # For the end to end test only, which makes a real call through the dio
+  # interceptor. A dev dependency never reaches an app, so the core still ships
+  # with no HTTP package. The path, because the interceptor and the core change
+  # in the same commit.
+  dio: '>=5.2.0 <7.0.0'
+  code_scout_dio:
+    path: packages/code_scout_dio
 
 flutter:
   assets:

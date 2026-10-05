@@ -28,6 +28,30 @@ void main() {
     return out.toString();
   }
 
+  // It was printed inside the network branch only, so a developer reading the
+  // console had no way to tell which call an app's parse failure was about.
+  test('a log about a call prints the call\'s request id', () {
+    const id = '3b8e0c51-7f2d-4a9e-b1c4-92d05e6a1f37';
+    final out = StringBuffer();
+    runZoned(
+      () => CSxPrinter(
+        LogEntry(
+          level: LogLevel.error,
+          message: 'Could not read GET /v2/cart',
+          sessionID: 's',
+          requestId: id,
+        ),
+      ).printToConsole(),
+      zoneSpecification: ZoneSpecification(
+        print: (_, _, _, line) => out.writeln(line),
+      ),
+    );
+
+    expect(out.toString(), contains('Request ID: $id'));
+    expect(printed(LogLevel.error), isNot(contains('Request ID')),
+        reason: 'a log with no id says nothing about one');
+  });
+
   group('the timestamp', () {
     test('has no elapsed-time suffix', () {
       // It read `(+-0:00:00.000115)`: the subtraction ran the wrong way, so the
